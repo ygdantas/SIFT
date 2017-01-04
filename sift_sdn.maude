@@ -642,7 +642,7 @@ eq checkEmpty (C:Config) = false [owise] .
      <name: Cont-SeVen | req-cnt: pmod, req-set: [lenSBM | switchBMirror], packet-in: pi , cnt: i, table-full: n, AS >
      =>
      flag(gt <= LIMIT * r, r)
-     <name: Cont-SeVen | req-cnt: 0.0, req-set: [lenSBM | switchBMirror], packet-in: pi , cnt: i, table-full: n, AS >
+     <name: Cont-SeVen | req-cnt: 1.0, req-set: [lenSBM | switchBMirror], packet-in: pi , cnt: i, table-full: n, AS >
      mytick(insert ( { gt | SL }, [ gt + Ts,  (controller-seven <- TIMEOUT), 0 ] ) )  
     .  
 
