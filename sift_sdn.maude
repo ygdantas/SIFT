@@ -1,0 +1,871 @@
+mod SAMPLER is
+  pr RANDOM .
+  pr COUNTER .
+  pr CONVERSION .
+
+  op sampleBerWithP : Float -> Bool .
+  op sampleUniWithInt : Nat -> Nat .       
+  op genRandom : Float Float -> [Float] .
+  var n s : Nat .
+
+  op rand : -> [Float] .
+  rl [rnd] : rand => float(random(counter) / 4294967296) .
+  eq rand = float(random(1) / 4294967296) .
+
+  op rrand : -> [Rat] .
+  rl [rrnd] : rrand => random(counter) / 4294967296 .
+  eq rrand = random(1) / 4294967296 .
+
+  var lenR R1 Min Max : Float .
+
+  eq sampleBerWithP(lenR) = if rand < lenR then true else false fi . 
+  eq sampleUniWithInt(n) = floor(rrand * n) .
+  eq genRandom(Min, Max) = - log(1.0 - (rand * (Max - Min) + Min) ) .
+
+endm
+
+mod AUXILIAR is
+
+protecting NAT . 
+protecting FLOAT .
+protecting CONVERSION .
+
+sort Contents .
+sort Address .
+
+sort Msg .
+op _<-_ : Address Contents -> Msg . --- construtor Msg
+
+sort Rule .
+subsort Rule < Msg .
+op _->_ : Address Address -> Rule . --- construtor Rule
+
+
+sort ActiveMsg .
+subsort ActiveMsg < Config .
+op {_,_} : Float Msg -> ActiveMsg . --- Mensagem ativa
+
+sort Actor .
+sort ActorType . --- (atacante, servidor, client)
+sorts Attribute AttributeSet .
+subsort Attribute < AttributeSet .
+op none : -> AttributeSet .
+op _,_ : AttributeSet AttributeSet -> AttributeSet [assoc comm id: none] . --- Concatenar AttributeSET
+op <name:_|_> : Address AttributeSet -> Actor [ctor format (d d d d d n)] . --- construtor actor
+ 
+  op [__] : Msg Msg -> Msg .
+  sort Config .
+  subsorts Msg ActorType Actor < Config .
+
+  sort Object .
+  subsort Actor < Object . --- Actor can be represented by a term of sort Object
+  subsort Msg < Object . --- Message can be represented by a term of sort Object
+  subsort Object < Config .
+
+--- Config
+  op none : -> Config .
+  op flag : Bool Float -> Config . ---- a flag delimiting execution rounds
+  op __ : Config Config -> Config [assoc comm id: none] . --- construtor Config
+--- END OF Config
+
+--- SCHEDULER
+  sorts Scheduler ScheduleMsg ScheduleList .
+  subsorts ScheduleMsg Scheduler < ScheduleList .
+  subsort Scheduler ScheduleMsg ScheduleList < Config .
+  subsort Msg ActiveMsg < Scheduler .
+  subsort Msg ActiveMsg < ScheduleList .
+
+  op {_|_} : Float ScheduleList -> Scheduler .
+  op  nil : -> ScheduleList .
+  op  _;_ : ScheduleList ScheduleList -> ScheduleList [assoc id: nil] .
+  op [_,_,_] : Float Msg Nat -> ScheduleMsg . --- Agendar envio de mensagem 
+--- END OF SCHEDULER
+
+
+--- Scheduler Operation
+  op insert : Scheduler ScheduleMsg -> Scheduler .
+  op insert : ScheduleList ScheduleMsg -> ScheduleList .
+  op insertList : Scheduler ScheduleList -> Scheduler .
+  op insertList : ScheduleList ScheduleList -> ScheduleList .
+--- End of List Operation
+
+  op tick : Config -> Config .
+  op mytick : Scheduler -> Config .
+  op global-time : Scheduler -> Float .
+  op getTime : Config -> Float .
+  
+  var t1 t2 t gt : Float .
+  var C : Config .
+  var O O1 : Object .
+  var pmod i : Nat .
+  var SL SL' : ScheduleList .
+  var e : ScheduleMsg .
+  var M1 M2 : Msg .
+
+--- { float | Msg } --> ActiveMsg . 
+  eq global-time({ gt | SL }) = gt .
+  eq getTime(C {gt | SL}) = gt .  
+
+  eq insert({ gt | SL },e) = { gt | insert(SL,e) } .
+  eq insert(SL , [ t2 , M2, 1 ]) = SL .   
+  eq insert([ t1 , M1, pmod ] ; SL , [ t2 , M2, 0 ]) = 
+       if t1 < t2 then [ t1 , M1, pmod ] ; insert(SL, [ t2 , M2, 0 ]) 
+                  else ([ t2 , M2, 0 ] ; [ t1 , M1, pmod ] ; SL) fi .
+  eq insert( nil , [ t2 , M2, 0 ]) = [ t2 , M2, 0 ] .
+
+
+  eq insertList({ gt | SL }, SL') = { gt | insertList(SL, SL') } .
+  eq insertList(SL , [t2 , M2, pmod] ; SL') = insertList( insert(SL, [t2, M2, pmod]), SL' ) .
+  ---eq insertList( nil , SL') = SL' .
+  eq insertList( SL , nil ) = SL .
+
+  eq mytick({ gt | [ t1 , M1, pmod ] ; SL }) = M1 { t1 | SL } .
+  eq mytick( { gt | nil }) = { gt | nil } . --- Vivek changed
+
+endm
+
+mod SDN-SEVEN is 
+
+protecting NAT . 
+protecting FLOAT .
+protecting AUXILIAR .
+protecting RANDOM .
+pr COUNTER .
+protecting CONVERSION .
+protecting SAMPLER .
+
+
+vars eleBuf neleBuf : EleBuf .
+vars ads nads : Address .
+var idReq : Rule . 
+vars f nf li nli : Float .
+vars limI limS nlimI nlimS ran count : Nat .
+vars arrivedTime idle hard : Float .
+
+
+--- PACKAGES - mensagem
+  op GET : Address Nat -> Contents .
+  op GET : Address Address -> Contents .
+  op PRAGMA : Address Nat -> Contents . --- endereço, tamanho do pacote pragma
+  op ACK : -> Contents .
+  op ACK : Address Address -> Contents .
+  op END : -> Contents .
+  op TIMEOUT : Address -> Contents .
+  op TIMEOUT : -> Contents .
+  op CONNECT : -> Contents .
+  op REMOVE : -> Contents .
+  op UPDATE : Address -> Contents .
+  op IDLE : -> Contents .
+  op HARD : -> Contents .
+  op REQUEST : Address Address -> Contents .
+  op DATAPACKAGE : Address Address -> Contents .
+  op PACKET-IN : Rule Address -> Contents .  
+  op TABLE-FULL : Rule Address NBuffer -> Contents .  
+  op FLOW-MOD : Address Float -> Contents .
+  op FLOW-MOD : Rule -> Contents .
+  op FLOW-REMOVED : Rule -> Contents .
+  op IDLE-TIMEOUT : Rule -> Contents .
+  op HARD-TIMEOUT : Address -> Contents .
+---  op ERROR : NBuffer Address Address Address -> Contents .
+  op ERROR : NBuffer Rule Address -> Contents .
+  op SEVEN-DECISION : NBuffer Rule Bool -> Contents . 
+  ops spawn poll restart itimeout : -> Contents .
+
+--- END OF PACKAGES
+
+--- SERVER
+  op server:_ : Address -> Attribute .
+  op app:_ : Address -> Attribute .
+  op controller:_ : Address -> Attribute .  
+  op req-cnt:_ : Float -> Attribute .
+  op req-set:_ : NBuffer -> Attribute .
+  op conn-set:_ : NBuffer -> Attribute . 
+  op cnt:_ : Nat -> Attribute .
+  op suc-get:_ : Nat -> Attribute .
+  op table-full:_ : Nat -> Attribute .
+  op packet-in:_ : Nat -> Attribute .
+  op flow-mod:_ : Nat -> Attribute .
+--- END OF SERVER 
+
+--- CLIENT
+  sort Status .
+  ops waiting connected failed : -> Status .
+  op status:_ : Status -> Attribute [gather(&)] .
+  op call:_ : Status -> Attribute [gather(&)] .
+  op retries:_ : Nat -> Attribute .
+  op rep-cnt:_ : Nat -> Attribute .
+  op atime:_ : Float -> Attribute .  
+  op stime:_ : Float -> Attribute .  
+
+--- END OF CLIENT 
+
+--- ATTACKER
+  ops none get pragma : -> Status .
+  ops none invite oncall complete incomplete finished : -> Status . 
+  op step:_ : Status -> Attribute [gather(&)] .
+  op cnt-pragma:_ : Nat -> Attribute .
+--- END OF ATTACKER
+
+--- Object names
+  op g  :     -> Address .   --- generator
+  op ga : -> Address . --- generator attackers
+  op c  : Nat -> Address .   --- clients
+  op a : Nat -> Address . --- attackers
+  op At : -> Address . --- attacker
+  op server : -> Address . --- Server
+  op attacker : -> Address .
+  op controller-seven : -> Address .
+  op switch : -> Address .
+  op app : -> Address .
+
+--- Buffer
+
+  sorts EleBuf Buffer NBuffer .
+  subsorts Address Float Buffer < NBuffer .
+  subsort NBuffer < Attribute .
+  subsort EleBuf < Buffer .
+  
+--- Elementos do Buffer 
+--- vars arrivedTime idle hard count : Float .
+ --- op <____> : Address Float Float Nat -> EleBuf . --- elementos do buffer (id, time da entrada, time da ultima requisição, tamanho get pack)
+  op <_____> : Rule Float Float Float Nat -> EleBuf [ctor format (d d d d d d d n)].
+  op [_|_] : Nat Buffer -> NBuffer . --- NBuffer
+  op none : -> Buffer .
+  op __ : Buffer Buffer -> Buffer [comm assoc id: none] .   --- Construtor Buffer
+  
+
+  op getLenBuf : NBuffer -> Nat .
+  eq getLenBuf ([len:Nat | B:Buffer]) = len:Nat .
+
+  op getBuf : NBuffer -> Buffer .
+  eq getBuf ([len:Nat | B:Buffer]) = B:Buffer .
+
+  op getSrc : Rule -> Address .
+  eq getSrc (src:Address -> dst:Address) = src:Address .
+
+  op getDst : Rule -> Address .
+  eq getDst (src:Address -> dst:Address) = dst:Address .
+
+  op getAddress : EleBuf -> Rule . 
+  eq getAddress ( < idReq arrivedTime idle hard count > ) = idReq .
+
+  op getArrivedTime : Rule EleBuf -> Float . 
+  eq getArrivedTime (idReq,  < idReq arrivedTime idle hard count > ) = arrivedTime .
+  eq getArrivedTime (idReq,none) = -1.0 .  
+  
+  op getIdle : Rule EleBuf -> Float . 
+  eq getIdle (idReq,  < idReq arrivedTime idle hard count > ) = idle .
+  eq getIdle (idReq,none) = -1.0 .
+
+  op getHard : Rule EleBuf -> Float . 
+  eq getHard (idReq,  < idReq arrivedTime idle hard count > ) = hard .    
+  eq getHard (idReq,none ) = -1.0 .    
+
+  op getCount : Rule EleBuf -> Nat . 
+  eq getCount (idReq,  < idReq arrivedTime idle hard count > ) = count .
+  eq getCount (idReq,none) = 0 .
+
+--- Operadores do Buffer 
+  op add : NBuffer EleBuf -> NBuffer .
+  op size : NBuffer -> Nat . 
+  op remove : Buffer Rule -> NBuffer .
+  op _in_ : Rule Buffer -> Bool .
+  op update : NBuffer EleBuf EleBuf -> NBuffer .
+  op search : Buffer Rule -> EleBuf .
+
+  op getRuleSender : Rule -> Address .
+  op getRuleReceiver : Rule -> Address .
+  vars sender receiver : Address .
+  eq getRuleSender((sender -> receiver)) = sender .
+  eq getRuleReceiver((sender -> receiver)) = receiver .
+
+  ceq search(eleBuf B:Buffer, idReq) = eleBuf 
+    if (getAddress(eleBuf) == idReq) .
+
+  eq search(B:Buffer, idReq) = none [owise] . 
+
+  eq add([ lenR:Nat | B:Buffer ] , eleBuf ) = [ s(lenR:Nat) | eleBuf B:Buffer ] . 
+  eq size([ lenR:Nat | B:Buffer ]) = lenR:Nat .
+
+  var nIdReq : Rule .
+  vars nArrivedTime nIdle nHard : Float .
+  var nCount : Nat . 
+
+  eq update([lenR:Nat | < idReq arrivedTime idle hard count > B:Buffer] , < idReq arrivedTime idle hard count > , < nIdReq nArrivedTime nIdle nHard nCount > ) 
+    = [ (lenR:Nat) | < nIdReq nArrivedTime nIdle nHard nCount >  B:Buffer ] .
+  eq update([lenR:Nat | B:Buffer] , < idReq arrivedTime idle hard count > , < nIdReq nArrivedTime nIdle nHard nCount > )
+    = < idReq arrivedTime idle hard count > [ (lenR:Nat) | < idReq arrivedTime idle hard count > B:Buffer ] [owise] .
+  
+ ceq remove(eleBuf B:Buffer, idReq ) = B:Buffer 
+  if idReq == getAddress(eleBuf) .  
+  eq remove(B:Buffer , idReq) = B:Buffer [owise] .
+
+  --- *** implementacao do operador IN *** ---
+  ceq idReq in eleBuf B:Buffer = true 
+    if idReq == getAddress(eleBuf) .
+  eq idReq in B:Buffer = false [owise] .
+
+--- Fim do Buffer
+
+op tMedio : -> Float .
+op tMax : -> Float .
+eq tMedio = 5.0 .
+eq tMax = 5.0 .
+
+op accept-prob : Float -> Float .
+eq accept-prob(pmod) = floor(lenBufSeVen) / pmod .
+
+op swap : Buffer EleBuf Nat -> Buffer .
+eq swap(eleBuf B:Buffer, neleBuf, s(i)) = eleBuf swap(B:Buffer, neleBuf, i) .
+eq swap(eleBuf B:Buffer, neleBuf, 0) = neleBuf B:Buffer .
+eq swap(none, neleBuf, i) = none .
+---eq swap(eleBuf B:Buffer, neleBuf, s(i)) = neleBuf B:Buffer .
+
+op removeEleBuf : Buffer -> Buffer .
+eq removeEleBuf (eleBuf B:Buffer) = B:Buffer .
+
+op lengthBuffer : Buffer -> Nat .
+eq lengthBuffer (eleBuf B:Buffer) = 1 + lengthBuffer(removeEleBuf(B:Buffer eleBuf))  .
+eq lengthBuffer (none B:Buffer) = 0 .
+
+op reply : Address Buffer Float -> [ScheduleList] .
+---ceq reply(server, < idReq arrivedTime idle hard count  > B:Buffer, gt) = [gt + delay, (getSrc(idReq)) <- RINGING) , drop?] ; [gt, server <- REMOVE, 0] ; [gt, server <- UPDATE(idReq),0] ; reply(server, B:Buffer, gt) 
+---if (gt > arrivedTime) .
+---eq reply(server, < idReq arrivedTime idle hard count > B:Buffer, gt) = reply(server, B:Buffer, gt) [owise] .
+---eq reply(server , none , gt) = nil .
+
+ops pIN pWAIT : -> Nat .
+op alpha : -> Float .
+eq pIN = 2 .
+eq pWAIT = 8 .
+eq alpha = 1.89 .
+
+***( Funcoes ASV )***
+
+
+  op arate : Float -> Config .    ---- current attack rate
+  op crate : Float -> Config .    ---- current client request rate
+
+
+  ops lenPRAGMA lenGET : -> Nat .
+  op ran : Nat -> Bool .
+  op len : Nat -> Nat .
+  op lenBuf : -> Nat .
+  ops Ts Tc S SA LIMIT lenBufSeVen lenBufSwitch : -> [Float] .
+  op J  : Float Float -> [Nat] .
+  op initDelay : -> [Float] .
+  op delay : -> [Float] .
+  op delaySwitContr : -> [Float] .
+  op delayContrSwit : -> [Float] .
+  op timeforCall : -> [Float] .
+  op  drop? : -> [Nat] .
+  ops newAlpha newRho : -> [Float] .
+  ops numberClient numberAttacker : -> Nat .
+  ops idleTimeout hardTimeout idleTIMEOUT hardTIMEOUT : -> Float .
+  eq idleTimeout = 40.0 . --- TODO - change to 3.0
+  eq hardTimeout = 2.0 .
+  eq numberClient = 6 .  --- number of clients
+  eq numberAttacker = 13 . --- number of attackers
+  eq newAlpha =  (float(numberAttacker) / 4800.0) . 
+  eq newRho = (float(numberClient)  / 4800.0) .  
+  eq lenBufSeVen = float(lenBuf) . 
+  eq lenBuf = 12 . --- length of the buffer of the switch
+  eq lenBufSwitch = float(lenBuf) .  
+  eq S = 120.0 . --- static!
+  eq SA = 120.0 . --- static!
+  eq Ts = 0.2 . 
+  eq Tc = 0.2 .
+  eq LIMIT = 40.0 . --- simulation duration
+  eq initDelay = 0.05 .
+  eq delay = 0.01 .
+  eq delaySwitContr = delay * 1.0 .
+  eq delayContrSwit = delay * 1.0 .
+  eq timeforCall = 1.0 .
+  eq drop? = 0 .
+
+--- VARIABLES
+  vars Ser Cli Actor Switch Cont-SeVen App : Address . --- Server, Client, Switch, Controller-SeVen
+  var rule : Rule .
+  var AS : AttributeSet . --- AttributeSet
+  vars gt Rho r Alpha pmod t t' atime : Float . --- global time
+  vars tts : Float . --- Tempo entre um request e um response
+  vars si i i' j k N lenR lenP lenSB lenSBM lenApp n pi : Nat . --- contains the count of requests that have already been sent
+  var SL : ScheduleList .
+---  var CONNECT : Contents .
+  var m : Msg .
+  vars P R : Buffer . --- seven buffer
+  vars switchB switchBMirror appBuf : Buffer . --- switch buffer
+  var mirrorNBuffer NBuf : NBuffer .
+  var change : Bool .
+--- END OF VARIABLES
+
+--- ESTADO INICIAL
+var S : Scheduler .
+op buffer : -> Buffer .
+op attributeS : -> AttributeSet .
+op initial : -> Config .
+op initStat : -> Config . 
+op initState : -> Config . 
+op scheduleList : -> ScheduleList .
+
+
+--- /* initial state of SDN-SeVen model */  
+eq initState = flag(true, 1.0) arate(newAlpha) crate(newRho)  ---{ 0.0 | nil } 
+  <name: controller-seven | req-cnt: 1.0 , req-set: [0 | none], cnt: 0 , packet-in: 0 , table-full: 0, none >
+  <name: switch | controller: controller-seven, req-set: [0 | none], cnt: 0, none >
+  <name: app | server: switch, req-set: [0 | none] >  
+  <name: g | server: switch, app: app, cnt: 0 , none > ---(g <- spawn)
+  <name: ga | server: switch, app: app, cnt: 0 , none >
+  ---mytick(insert( insert({ 0.0 | nil} , [ initDelay, (ga <- spawn ), 0 ] ), [ initDelay , (g <- spawn ), 0 ] ) )  .
+  ---mytick(insert({ 0.0 | nil }, [ initDelay , (g <- spawn ), 0] )) . 
+        mytick(insert( insert( insert ({ 0.0 | nil} , [ initDelay, (ga <- spawn ), 0 ] ), [ initDelay , (g <- spawn ), 0 ] ), 
+            [ Ts, (controller-seven <- TIMEOUT), 0] ) )  .
+---mytick(insert( insert ({ 0.0 | nil } , [ initDelay , (g <- spawn ), 0 ] ), [ Ts, (server <- TIMEOUT), 0] ) ) .
+  ---mytick( insert( { 0.0 | nil }, [ initDelay, (g <- spawn), 0] ) ) .
+
+---mytick(insert( { 0.0 | nil } , 
+  ---   [ initDelay , (g <- spawn ), 0 ] ) ) .  
+
+--- FIM DO ESTADO INICIAL
+
+--- TODO: reset pmod
+--- TODO: increase the size of the buffer
+--- TODO: remove packet-in and flow mod messages sent by the switch to the controller
+--- such that the switch already check it in its switch.
+
+
+--- ensures that the model stops in LIMIT ---
+  crl[stop] :
+     flag(true,r) { gt | SL }
+   =>
+     flag(false,r) mytick({gt | SL})
+      if gt >= LIMIT .
+
+--- /* Rewriting rules of SDN-SeVen model */
+
+op emptyServer : -> Actor .
+op checkEmpty : Config -> Bool .
+eq checkEmpty (emptyServer C:Config) = true .
+eq checkEmpty (C:Config) = false [owise] .
+
+--- models when the application receives a request from a user. The application always replies with ACK
+ rl [App-Process-Request] :
+  flag(true, r) {gt | SL}
+   <name: App | server: Switch, req-set: [lenApp | appBuf], AS >
+   (App <- GET(Actor, Switch)) 
+  =>
+   flag (gt <= LIMIT * r, r)
+   <name: App | server: Switch, req-set: [lenApp | appBuf], AS >
+   mytick(insert ( { gt | SL }, [ gt + delay,  (Switch <- ACK(App, Actor)), 0 ] )  ) .
+
+
+--- 1 - models when a switch receives a REQUEST from a user. That is, this switch has to create a route from such a user to the App
+  crl [Switch-Receive-Request-From-User] :
+      flag(true, r) {gt | SL}
+      <name: Switch | controller: Cont-SeVen, req-set: [lenSB | switchB], cnt: si, AS >
+      (Switch <- REQUEST(Actor, App)) --- App is the final destination here.
+    =>
+     flag(gt <= LIMIT * r, r)
+     if (rule in switchB) then --- modify 'Actor' to a Rule type
+       <name: Switch | controller: Cont-SeVen, req-set: 
+       (update([lenSB | switchB], 
+                  < rule atime idle hard count >, 
+                  < rule atime gt hard  (count + 1) > )), cnt: si, AS >
+        mytick(insert(insert( { gt | SL } , [ gt + idleTimeout,  (Switch <- IDLE-TIMEOUT(rule)), 0 ]) , [gt + delay, (App <- GET(Actor, Switch)), 0 ] ))
+     else --- if the rule is not stored in the buffer, a packet-in message is sent to the controller
+        <name: Switch | controller: Cont-SeVen, req-set: [lenSB | switchB], cnt: si, AS >
+        mytick(insert ( { gt | SL }, [ gt + delaySwitContr,  (Cont-SeVen <- PACKET-IN(rule, Switch)), 0 ] ) )  
+      fi 
+   if rule := (Actor -> App)
+   /\ buf:Buffer := search(switchB, rule)
+   /\ atime := getArrivedTime(rule, buf:Buffer)
+   /\ idle := getIdle(rule, buf:Buffer)
+   /\ hard := getHard(rule, buf:Buffer)
+   /\ count := getCount(rule, buf:Buffer) .
+
+--- models when a switch receives an ACK response from the App. That is, this switch has to create a route from such an App to the Actor
+  crl [Switch-Receive-Response-From-App] :
+      flag(true, r) {gt | SL}
+      <name: Switch | controller: Cont-SeVen, req-set: [lenSB | switchB], cnt: si, AS >
+      (Switch <- ACK(App, Actor))
+    =>
+     flag(gt <= LIMIT * r, r)
+     if (rule in switchB) then --- modify 'Actor' to a Rule type
+       <name: Switch | controller: Cont-SeVen, req-set: 
+       update([lenSB | switchB], 
+           < rule atime idle hard count >, 
+           < rule atime gt hard  (count + 1) > ), cnt: si, AS >
+        mytick(insert(insert( { gt | SL } , [ gt + idleTimeout,  (Switch <- IDLE-TIMEOUT(App -> Actor)), 0 ]) , [gt + delay, (Actor <- ACK(Switch, App)), 0 ] ))
+     else --- if the rule is not stored in the buffer, a packet-in message is sent to the controller
+        <name: Switch | controller: Cont-SeVen, req-set: [lenSB | switchB], cnt: si, AS >
+        mytick(insert ( { gt | SL }, [ gt + delaySwitContr,  (Cont-SeVen <- PACKET-IN(App -> Actor, Switch)), 0 ] ) )  
+      fi  
+   if rule := (App -> Actor)
+   /\ buf:Buffer := search(switchB, rule)
+   /\ atime := getArrivedTime(rule, buf:Buffer)
+   /\ idle := getIdle(rule, buf:Buffer)
+   /\ hard := getHard(rule, buf:Buffer)
+   /\ count := getCount(rule, buf:Buffer) .
+
+--- models when a switch receives a flow-mode (packet-out) from the controller. That is, this switch has to forward the received rule
+  rl [Switch-Receive-Response-Controller] :
+      flag(true ,r) {gt | SL}
+      <name: Switch | controller: Cont-SeVen, req-set: [lenSB | switchB], cnt: si, AS >
+      (Switch <- FLOW-MOD(rule))
+      =>
+      flag(gt <= LIMIT * r, r)
+      if (lenSB >= lenBuf) then --- models when the buffer of the switch is full which implies an ERROR message to SeVen.
+          <name: Switch | controller: Cont-SeVen, req-set: [lenSB | switchB], cnt: si, AS >
+          mytick(insert ( { gt | SL }, [ gt + delaySwitContr,  (Cont-SeVen <- TABLE-FULL(rule, Switch, [lenSB | switchB]) ), 0 ] ) )
+      else --- models when rule is not in the buffer and the buffer is not full
+          if getSrc(rule) == app then --- models when the switch is forwarding the rule to the user and adding the incoming rule into the buffer
+            <name: Switch | controller: Cont-SeVen, req-set: add([lenSB | switchB], < rule gt gt gt 1 >) , cnt: si, AS >
+            mytick(insert(insert( { gt | SL } , [ gt + idleTimeout,  (Switch <- IDLE-TIMEOUT(rule)), 0 ]) , 
+              [gt + delay, (getDst(rule) <- ACK(Switch, getSrc(rule))), 0 ] ))  
+          else --- models when the switch is forwarding the rule to the application and adding the incoming rule into the buffer
+            <name: Switch | controller: Cont-SeVen, req-set: add([lenSB | switchB], < rule gt gt gt 1 >) , cnt: si, AS >
+            mytick(insert(insert( { gt | SL } , [ gt + idleTimeout,  (Switch <- IDLE-TIMEOUT(rule)), 0 ]) , 
+              [gt + delay, (getDst(rule) <- GET(getSrc(rule), Switch)), 0 ] )) 
+          fi       
+        fi 
+      .
+
+--- models when a switch receives the decision made by SeVen. It can be either the same buffer (SeVen did not make any change) 
+  --- or a new buffer (SeVen add the incoming request 
+--- and remove an entry)
+  rl [Switch-Receive-Response-SeVen] :
+      flag(true ,r) {gt | SL}
+      <name: Switch | controller: Cont-SeVen, req-set: [lenSB | switchB], cnt: si, AS >
+      (Switch <- SEVEN-DECISION(mirrorNBuffer, rule, change))
+      =>
+      flag(gt <= LIMIT * r, r)
+        if (change == true) then --- models when SeVen did change the buffer
+          if getDst(rule) =/= app then --- models when the switch is forwarding the rule the user 
+            <name: Switch | controller: Cont-SeVen, req-set: mirrorNBuffer , cnt: si, AS >
+            mytick(insert(insert( { gt | SL } , [ gt + idleTimeout,  (Switch <- IDLE-TIMEOUT(rule)), 0 ]) , [
+              gt + delay, (getDst(rule) <- ACK(Switch, getSrc(rule))), 0 ] ))  
+          else --- models when the switch is forwarding the rule the application
+            <name: Switch | controller: Cont-SeVen, req-set: mirrorNBuffer , cnt: si, AS >
+            mytick(insert(insert( { gt | SL } , [ gt + idleTimeout,  (Switch <- IDLE-TIMEOUT(rule)), 0 ]) , 
+              [gt + delay, (getDst(rule) <- GET(getSrc(rule), Switch)), 0 ] )) 
+          fi
+        else --- models when SeVen did not change the buffer
+          <name: Switch | controller: Cont-SeVen, req-set: mirrorNBuffer , cnt: si, AS >
+          mytick({ gt | SL }) 
+      fi
+    .
+
+--- models IDLE-TIMEOUT of the switch
+     rl [Switch-IDLE-Timeout] :
+      flag(true, r) {gt | SL}
+      <name: Switch | controller: Cont-SeVen, req-set: [lenSB | switchB], cnt: si, AS >
+      (Switch <- IDLE-TIMEOUT(rule))
+      =>
+      flag(gt <= LIMIT * r, r)
+      if (rule in switchB) then
+        if(gt >= (getIdle(rule, search(switchB, rule)) + idleTimeout)) then --- models when the timeout of rule has elapsed
+            <name: Switch | controller: Cont-SeVen, req-set: [lenSB + (-1) | remove(switchB, rule) ], cnt: si, AS >
+            mytick({gt | SL})
+        ---mytick(insert({ gt | SL },[ gt + delay,  (Cont-SeVen <- FLOW-REMOVED(rule)), 0 ]))
+        else --- models when the timeout of rule has not elapsed
+            <name: Switch | controller: Cont-SeVen, req-set: [lenSB | switchB], cnt: si, AS >
+            mytick({gt | SL})
+        fi
+      else
+        <name: Switch | controller: Cont-SeVen, req-set: [lenSB | switchB], cnt: si, AS >
+            mytick({gt | SL})
+      fi         
+      .
+
+
+    rl [Controller-TABLE-FULL] :
+     flag(true, r) { gt | SL }
+     (Cont-SeVen <- TABLE-FULL(rule, Switch, mirrorNBuffer))
+     <name: Cont-SeVen | req-cnt: pmod, req-set: [lenSBM | switchBMirror], cnt: i, table-full: n, AS >
+     =>
+     flag(gt <= LIMIT * r, r) (mytick ({ gt | SL })) 
+---     <name: Cont-SeVen | req-cnt: pmod, req-set: [lenSBM | switchBMirror], cnt: i, table-full: s n, AS > .
+    if (sampleBerWithP(accept-prob(pmod))) then --- models P1 - SeVen decides to process the incoming rule
+          <name: Cont-SeVen | req-cnt: (pmod + 3.0), req-set: [lenSBM | switchBMirror] ,
+          cnt: i, table-full: s(n), AS > --- TODO: Change Actor to a Rule type
+          mytick(insert ( { gt | SL }, [ gt + delayContrSwit,  (Switch <- SEVEN-DECISION(hasPairRule(rule, uniform(rule, gt, mirrorNBuffer)), 
+                rule, true)), 0 ] ) ) 
+          --- TODO: Change Actor to a Rule type
+       else --- models P1 - SeVen decides to NOT process the incoming rule
+          <name: Cont-SeVen | req-cnt: (pmod + 3.0), req-set: [lenSBM | switchBMirror], cnt: i, table-full: s(n), AS >
+          mytick(insert ( { gt | SL }, [ gt + delayContrSwit,  (Switch <- SEVEN-DECISION(mirrorNBuffer, rule, false)), 0 ] ) ) 
+       fi
+    .
+
+    op hasPairRule : Rule NBuffer -> NBuffer .
+    ceq hasPairRule (rule, NBuf) =  [getLenBuf(NBuf) + (-1) | remove(getBuf(NBuf), rule) ]
+      if rule in getBuf(NBuf) .
+    eq hasPairRule (rule, NBuf) =  NBuf [owise] .
+
+    op uniform : Rule Float NBuffer -> NBuffer .
+    eq uniform(rule, gt, NBuf) = [getLenBuf(NBuf) | swap(getBuf(NBuf), < rule gt gt gt 1 > , sampleUniWithInt(getLenBuf(NBuf))) ] .
+     
+--- flow-removed removes the rule from the buffer
+    rl [Controller-SeVen-Removed] :    
+       flag(true, r) {gt | SL}
+      <name: Cont-SeVen | req-cnt: pmod, req-set: [lenSBM | switchBMirror], cnt: i, table-full: n, AS > 
+      (Cont-SeVen <- FLOW-REMOVED(rule))
+      =>
+      flag(gt <= LIMIT * r, r)
+      if (rule in switchBMirror) then
+        <name: Cont-SeVen | req-cnt: pmod, req-set: [lenSBM + (-1) | remove(switchBMirror, rule) ], cnt: i, table-full: n, AS > 
+        ---TODO: remove the rule from the buffer.
+         mytick({gt | SL})
+      else
+        <name: Cont-SeVen | req-cnt: pmod, req-set: [lenSBM | switchBMirror], cnt: i, table-full: n, AS >
+        mytick({gt | SL})
+      fi   
+      .
+
+--- TODO LIST:
+--- change the list from multiset to list
+
+--- 2 - 
+  rl [Controller-New-Package] :
+     flag(true, r) { gt | SL }
+     (Cont-SeVen <- PACKET-IN(rule, Switch))
+     <name: Cont-SeVen | req-cnt: pmod, req-set: [lenSBM | switchBMirror], packet-in: pi , cnt: i, table-full: n, AS >
+     =>
+     flag(gt <= LIMIT * r, r)
+     <name: Cont-SeVen | req-cnt: pmod, req-set: [lenSBM | switchBMirror], cnt: i, packet-in: s(pi) , table-full: n, AS >
+     mytick(insert ( { gt | SL }, [ gt + delayContrSwit,  (Switch <- FLOW-MOD(rule)), 0 ] ) )  --- models the creation of a flow-mod (packet-out) by the controller
+    .  
+
+  rl [Controller-PMOD-Timeout] :
+     flag(true, r) { gt | SL }
+     (controller-seven <- TIMEOUT)
+     <name: Cont-SeVen | req-cnt: pmod, req-set: [lenSBM | switchBMirror], packet-in: pi , cnt: i, table-full: n, AS >
+     =>
+     flag(gt <= LIMIT * r, r)
+     <name: Cont-SeVen | req-cnt: 0.0, req-set: [lenSBM | switchBMirror], packet-in: pi , cnt: i, table-full: n, AS >
+     mytick(insert ( { gt | SL }, [ gt + Ts,  (controller-seven <- TIMEOUT), 0 ] ) )  
+    .  
+
+
+
+--- /* Client rules */
+--- Clients coming in at the rate of Rho * S
+    ceq crate(Rho)
+     <name: g | server: Switch, app: App, cnt: i , AS > (g <- spawn) { gt | SL }
+     = crate(Rho)
+        <name: g | server: Switch , app: App, cnt: s(i) , AS > 
+        <name: c(i) | server: Switch , app: App, retries: 0 , atime: gt , stime: Infinity , status: none , AS > 
+        mytick(insert(insert( { gt | SL } ,
+           [ gt  , (c(i) <- poll), 0 ] ) ,
+     [ (1.0  / (Rho * S)) + (gt)  , (g <- spawn), 0 ] ) )
+     if numberClient > i .
+
+    eq crate(Rho)
+     <name: g | server: Switch, app: App, cnt: i , AS > (g <- spawn) { gt | SL }
+     = crate(Rho)
+        <name: g | server: Switch , app: App, cnt: i , AS > 
+        mytick({ gt | SL }) [owise] .
+
+
+   crl [CliSendINVITE-with-repetition] : 
+        flag(true, r) crate(Rho) arate(Alpha)
+---        <name: c(i) | server: Switch , app: App , retries: j , status: none, AS >
+        <name: c(i) | server: Switch , app: App , retries: j , status: any:Status, AS >        
+        (c(i) <- poll) { gt | SL }
+     => flag(gt <= LIMIT * r, r) crate(Rho) arate(Alpha)
+          <name: c(i) | server: Switch , app: App, retries: s(j) , status: waiting, AS > 
+ ---         mytick(insert ( { gt | SL}, [ gt + delay, (Switch <- REQUEST(c(i), App)), 0 ] )) .
+      mytick(insert(
+          (insert( { gt | SL } ,
+        [ gt + delay, (Switch <- REQUEST(c(i), App)), 0 ] ) ),
+        [ gt + delay + (0.9 * idleTimeout) , (a(i) <- poll), 0 ])) 
+     if j < 3 .
+
+   crl [CliSendINVITE] : 
+        flag(true, r) crate(Rho) arate(Alpha)
+        <name: c(i) | server: Switch , app: App , retries: j , status: any:Status, AS >
+        (c(i) <- poll) { gt | SL }
+     => flag(gt <= LIMIT * r, r) crate(Rho) arate(Alpha)
+          <name: c(i) | server: Switch , app: App, retries: j , status: waiting, AS > 
+          mytick(insert ( { gt | SL}, [ gt + delay, (Switch <- REQUEST(c(i), App)), 0 ] ))     
+        if j >= 3 .
+
+    rl [CliReceiveINVITE] : 
+        flag(true, r) crate(Rho) arate(Alpha)
+        <name: c(i) | server: Switch , app: App, stime: Infinity, retries: j, status: waiting, AS >
+        (c(i) <- ACK(Switch, App) ) { gt | SL }
+     => flag(gt <= LIMIT * r, r) crate(Rho) arate(Alpha)
+          <name: c(i) | server: Switch , app: App, stime: gt, retries: j , status: connected, AS > 
+          mytick({gt | SL}) .
+
+    rl [CliReceiveINVITE2] : 
+        flag(true, r) crate(Rho) arate(Alpha)
+        <name: c(i) | server: Switch , app: App, retries: j, status: connected, AS >
+        (c(i) <- ACK(Switch, App) ) { gt | SL }
+     => flag(gt <= LIMIT * r, r) crate(Rho) arate(Alpha)
+          <name: c(i) | server: Switch , app: App, retries: j , status: connected, AS > 
+           mytick({gt | SL}) .
+
+---REQUEST(Actor)
+
+--- END OF CLIENT ---
+
+--- ATTACKER ---
+
+--- /* Attacker rules */
+     vars initT endT : Float .
+--- Attackers coming in at the rate of Rho * S
+    ceq arate(Alpha)
+       <name: ga | server: Switch, app: App, cnt: i , AS > (ga <- spawn) { gt | SL }
+     = arate(Alpha)
+        <name: ga | server: Switch, app: App, cnt: s(i) , AS > 
+        <name: a(i) | server: Switch, app: App, atime: gt , stime: Infinity ,status: none , AS >  
+        mytick(insert(insert( { gt | SL } ,
+           [ gt  , (a(i) <- poll), 0 ] ) ,
+       [ (1.0  / (Alpha * SA)) + (gt)  , (ga <- spawn), 0 ] ) ) 
+    if numberAttacker > i .
+
+  eq arate(Alpha)
+       <name: ga | server: Switch, app: App, cnt: i , AS > (ga <- spawn) { gt | SL }
+     = arate(Alpha)
+        <name: ga | server: Switch, app: App, cnt: i , AS > 
+         mytick({ gt | SL }) [owise] .
+
+  rl [ATSendRequest] : 
+        flag(true, r) arate(Alpha) crate(Rho)
+        <name: a(i) | server: Switch, app: App, status: any:Status , AS > 
+        (a(i) <- poll) { gt | SL }
+     => flag(gt <= LIMIT * r, r) arate(Alpha) crate(Rho)
+        <name: a(i) | server: Switch, app: App, status: waiting , AS > 
+        mytick(insert(
+          (insert( { gt | SL } ,
+        [ gt + delay, (Switch <- REQUEST(a(i), App)), 0 ] ) ),
+        [ gt + delay + (0.9 * idleTimeout) , (a(i) <- poll), 0 ])) .
+
+  rl [ATSendRequest] : 
+        flag(true, r) arate(Alpha) crate(Rho)
+        <name: a(i) | server: Switch, app: App, status: waiting , AS > 
+        (a(i) <- ACK(Switch, App) ) { gt | SL }
+     => flag(gt <= LIMIT * r, r) arate(Alpha) crate(Rho)
+        <name: a(i) | server: Switch, app: App, status: connected , AS > 
+        ---mytick(insert( { gt | SL } ,
+        ---[ gt + (idleTimeout + (- delay * 10.0)) , (Switch <- REQUEST(a(i), App)), 0 ] ) ) .
+        mytick({ gt | SL }) .
+rl [ATSendRequest] : 
+        flag(true, r) arate(Alpha) crate(Rho)
+        <name: a(i) | server: Switch, app: App, status: connected , AS > 
+        (a(i) <- ACK(Switch, App) ) { gt | SL }
+     => flag(gt <= LIMIT * r, r) arate(Alpha) crate(Rho)
+        <name: a(i) | server: Switch, app: App, status: connected , AS > 
+        ---mytick(insert( { gt | SL } ,
+        ---[ gt + delay, (Switch <- REQUEST(a(i), App)), 0 ] ) ) .        
+        mytick({ gt | SL }) .
+***( crl [Restart-Timeout-Attacker-none2] :
+  (a(i) <- TRYING) { gt | SL } 
+  <name: a(i) | server: Ser , status: oncall , AS >  
+   =>
+      <name: a(i) | server: Ser , status: oncall , AS  >
+     mytick({ gt | SL })    
+    if gt > 0.0 .
+) ***
+
+--- END OF ATTACKER --- 
+
+
+--- /* PVeSTa */ ---
+
+---var lenP : Float .
+var C : Config .
+var b : Bool .
+vars pv-f p : Float .
+
+op countConnected : Float Config -> Float .
+op countConnectedAT : Float Config -> Float .
+op countConnectedFIN : Float Config -> Float .
+op countConnectedCON : Float Config -> Float .
+op countConnectedIN : Float Config -> Float .
+op countConnectedDoS : Float Config -> Float .
+op  countClients : Config -> Float .
+op countAttackers : Config -> Float .
+op countDenialPragma : Config -> Float .
+op countConAttacker : Float Config -> Float .
+op val : Nat Config -> Float .
+op sat : Nat Config -> Bool .
+op networkTraffic : Config -> Float .
+op countPragma : Config -> Float .
+
+--- Success Probability
+op hasConnected : Nat Config -> Float .
+
+eq hasConnected(i, <name: c(i) | status: connected , AS > C ) = 1.0 .
+eq hasConnected(i, C) = 0.0 [owise] .
+
+eq countConnected(p, <name: c(i) | status: connected , AS > C ) = countConnected(p + 1.0 , C) .
+eq countConnected(p,C) = p [owise] .
+
+eq countClients(<name: g | cnt: i , AS > C) = float(i) .
+
+
+eq countAttackers(<name: ga | cnt: i , AS > C) = float(i) .
+eq networkTraffic(<name: Ser | cnt: i , suc-get: k , AS > C) = float(i) .
+
+
+eq countConnectedAT(pv-f, <name: a(i) | status: oncall , AS > C ) = countConnectedAT(pv-f + 1.0 , C) .
+eq countConnectedAT(pv-f,C) = pv-f [owise] .
+
+  --- Average time-to-service
+  op  avgTTS : Config -> Float .
+  op  sumTTS : Float Config -> Float .
+ ceq avgTTS(C) = if r > 0.0 then sumTTS(0.0, C) / r else 0.0 fi 
+                    if r := countConnectedIN(0.0, C) .
+***(
+  ceq sumTTS(pmod, <name: a(i) | atime: t , stime: t' , status: oncall , AS > C ) = sumTTS(pmod + ((40.0 + (- t))), C) 
+    if (t' == Infinity) .
+  ceq sumTTS(pmod, <name: a(i) | atime: t , stime: t' , status: oncall , AS > C ) = sumTTS(pmod + (t' + (- t)), C)
+    if (not(t' == Infinity)) .
+   
+  eq sumTTS(pmod, C) = pmod [owise] .  
+)***
+ eq sumTTS(pv-f, <name: c(i) | atime: t , stime: t' , status: incomplete, AS > C )
+     = sumTTS(pv-f + (t / t'), C) .
+  eq sumTTS(pv-f, C) = pv-f [owise] . 
+
+eq tick( flag(b, r) C ) = flag(true, r + 1.0) C .
+
+op getTableFull : Config -> Float .
+eq getTableFull(<name: Cont-SeVen | table-full: n, AS > C) = float(n) .
+
+op getPacketIn : Config -> Float .
+eq getPacketIn(<name: Cont-SeVen | packet-in: pi, AS > C) = float(pi) .
+
+eq sat(0, C) = if hasConnected(0, C) > 0.0 then true else false fi .
+eq val(0,C) = countConnectedFIN(0.0,C) .
+eq val(1,C) = countClients(C) .
+eq val(2,C) = countAttackers(C) .
+eq val(3,C) = countConnected(0.0, C) / countClients(C) . 
+eq val(4,C) = getTableFull(C) .
+eq val(5,C) = getPacketIn(C) . 
+
+endm  
+
+***(
+   op  sumCON : Float Config -> Float .
+   ceq sumCON(pmod, <name: c(i) | atime: t , stime: t' , status: connected , AS > C ) = sumCON(pmod + 1.0 , C) 
+     if ( (t' + (- t)) >= tMedio ) .
+  eq sumCON(pmod, C) = pmod [owise] . 
+
+  op  sumCON2 : Float Config -> Float .
+   ceq sumCON2(pmod, <name: c(i) | atime: t , stime: t' , status: connected , AS > C ) = sumCON2(pmod + 1.0 , C) 
+     if ( (t' + (- t)) < tMedio ) .
+  eq sumCON2(pmod, C) = pmod [owise] .  
+)***
+
+***(
+TODO 
+
+- Checar o tempo de criacao (mais uma vez) dos atacantes e clientes
+- Fazer o teste com o ataque coordenado
+- Modelar o ataque 991
+- Fazer os testes com o ataque 991
+
+)***

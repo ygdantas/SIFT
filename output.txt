@@ -1,0 +1,22 @@
+Server port: 1117
+
+Server is now accepting a new connection...
+
+Parameters: 
+model: 		seven_sdn.maude
+model arguments: 	
+formula: 	clients.quatex
+alpha: 		0.01
+beta: 		0.0
+seed: 	2081666968
+sims: 		60
+Params: 		0.05 0.01 0.01 10000000 0.0 0 
+		     \||||||||||||||||||/
+		   --- Welcome to Maude ---
+		     /||||||||||||||||||\
+	    Maude 2.6 built: Dec  9 2010 18:28:39
+	    Copyright 1997-2010 SRI International
+		   Sat Oct 29 08:58:47 2016
+Failed to perform simulation runs.
+
+Server is now accepting a new connection...
